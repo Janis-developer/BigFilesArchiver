@@ -81,6 +81,9 @@ namespace BigFilesArchiver
                         General.Log($"all threads are finished");
                         // good place to let the writer go
                         writerThread.Finish();
+                        //this might be unnecesary, since program is exiting anyway,
+                        //but to keep code orginised:
+                        writerThread.Dispose(); 
                         writerThread = null;
                         break;
                     }
@@ -111,6 +114,7 @@ namespace BigFilesArchiver
 
                             // right place to set the reader free
                             readerThread.Finish();
+                            readerThread.Dispose();//to feel good
                             readerThread = null;
                         }
 
@@ -121,7 +125,11 @@ namespace BigFilesArchiver
                     if (finishing)
                     {
                         worker.Finish();
+                        workers[idx].Dispose();
                         workers[idx] = null;
+                        //can clean buffers here as well
+                        buffers[idx].Dispose();
+                        buffers[idx] = null;
                     }
                     else
                     {
