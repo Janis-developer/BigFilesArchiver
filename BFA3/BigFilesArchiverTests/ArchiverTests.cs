@@ -18,7 +18,7 @@ namespace BigFilesArchiver.Tests
         static string outFile = inFile + ".bfa3.cgz";
         static string unzipFile = inFile + ".bfa3.unzipped";
         static int bufferSize = 100 * 1024 * 1024;
-        static int differentBufferSize = 250 * 1024 * 1024;
+        static int differentBufferSize = 125 * 1024 * 1024;
         static int smallerBufferSize = 75 * 1024 * 1024;
         static uint procCount = (uint)Environment.ProcessorCount;
 
@@ -43,6 +43,12 @@ namespace BigFilesArchiver.Tests
         public void ZipByChunks_UsingSmallerBufferTest()
         {
             Archiver.ZipByChunks(inFile, outFile, smallerBufferSize);
+        }
+
+        [TestMethod()]
+        public void ZipByChunks_UsingDifferentBufferTest()
+        {
+            Archiver.ZipByChunks(inFile, outFile, differentBufferSize);
         }
 
 

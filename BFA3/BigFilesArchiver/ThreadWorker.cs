@@ -107,8 +107,10 @@ namespace BigFilesArchiver
         #region Simple Dispose
         public void Dispose()
         {
-            ((IDisposable)notifyDone).Dispose();
-            ((IDisposable)haveWork).Dispose();
+            if(notifyDone!=null)
+                ((IDisposable)notifyDone).Dispose();
+            if(haveWork!=null)
+                ((IDisposable)haveWork).Dispose();
         }
         #endregion Simple Dispose
     }

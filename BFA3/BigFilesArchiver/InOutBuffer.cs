@@ -25,7 +25,8 @@ namespace BigFilesArchiver
                 if (disposing)
                 {
                     // TODO: dispose managed state (managed objects)
-                    Out.Dispose();
+                    Out?.Dispose();
+                    Out = null;
                 }
 
                 // TODO: free unmanaged resources (unmanaged objects) and override finalizer

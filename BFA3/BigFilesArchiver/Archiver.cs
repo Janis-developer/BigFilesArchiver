@@ -11,60 +11,65 @@ using System.Xml;
 namespace BigFilesArchiver
 {
 
-	/// <summary>
-	/// Main class to do zip/unzip by chunks.
-	/// Created according to the following requirements:
-	/// Only basic classes and synchronization objects should be used for multithreading 
-	/// (Thread, Manual/AutoResetEvent, Monitor, Semaphore, Mutex), 
-	/// it is not allowed to use async/await, ThreadPool, BackgroundWorker, TPL.
-	/// </summary>
-	public static class Archiver
-	{
-		const int defaultChunkSize = 10 * 1024 * 1024;
+    /// <summary>
+    /// Main class to do zip/unzip by chunks.
+    /// Created according to the following requirements:
+    /// Only basic classes and synchronization objects should be used for multithreading 
+    /// (Thread, Manual/AutoResetEvent, Monitor, Semaphore, Mutex), 
+    /// it is not allowed to use async/await, ThreadPool, BackgroundWorker, TPL.
+    /// </summary>
+    public static class Archiver
+    {
+        const int defaultChunkSize = 10 * 1024 * 1024;
 
 
-		public static void ZipByChunks(string inputName, string outputName, int bufferSize = 0, uint workersCount = 0)
-		{
-			ManageThreads(inputName, outputName, ArchAction.Zip, bufferSize, workersCount);
-		}
+        public static void ZipByChunks(string inputName, string outputName, int bufferSize = 0, uint workersCount = 0)
+        {
+            ManageThreads(inputName, outputName, ArchAction.Zip, bufferSize, workersCount);
+        }
 
 
-		public static void UnzipFromChunks(string inputName, string outputName, int bufferSize = 0, uint workersCount = 0)
-		{
-			ManageThreads(inputName, outputName, ArchAction.Unzip, bufferSize, workersCount);
-		}
+        public static void UnzipFromChunks(string inputName, string outputName, int bufferSize = 0, uint workersCount = 0)
+        {
+            ManageThreads(inputName, outputName, ArchAction.Unzip, bufferSize, workersCount);
+        }
 
 
-		private static void ManageThreads(string inputName, string outputName, ArchAction act, int bufferSize, uint workersCount = 0)
-		{
-			General.Log($"{act} started.");
-
-			InOutBuffer[] buffers = null;
-			ThreadWorker[] workers = null;
-			ArchReader reader;
-			ThreadWorker readerThread = null;
-			ArchWriter writer;
-			ThreadWorker writerThread = null;
-
-			if (bufferSize < defaultChunkSize)
-				bufferSize = defaultChunkSize;
+        private static void ManageThreads(string inputName, string outputName, ArchAction act, int bufferSize, uint workersCount = 0)
+        {
+            InOutBuffer[] buffers = null;
+            ThreadWorker[] workers = null;
 
             try
             {
+                General.Log($"Started '{inputName}' {act} into '{outputName}'...");
 
-                using FileStream outFileStream = File.Create(outputName);
-            
-                using FileStream inFileStream = File.OpenRead(inputName);
+                if (bufferSize < defaultChunkSize)
+                    bufferSize = defaultChunkSize;
 
                 if (workersCount < 1)
                     workersCount = ChooseWorkersCount();
 
+                General.Log($"buffer size {bufferSize}, workers count {workersCount}");
 
-                CreateAllObjects(act, bufferSize, workersCount, outFileStream, inFileStream, out buffers, out workers, out reader, out readerThread, out writer, out writerThread);
+                //to feel good let's use 'using'
 
-				StartConveyor(reader, readerThread, workers, buffers);
+                // objects for input reading
+                using FileStream inFileStream = File.OpenRead(inputName);
+                ArchReader reader = new ArchReader(inFileStream, act);
+                using ThreadWorker readerThread = new ThreadWorker(reader, true);
 
-				int idx = 0;
+                // objects for output writing
+                using FileStream outFileStream = File.Create(outputName);
+                ArchWriter writer = new ArchWriter(outFileStream, act);
+                using ThreadWorker writerThread = new ThreadWorker(writer, true);
+
+                // create objects to do zipping/unzipping
+                CreateBuffersAndWorkers(act, bufferSize, workersCount, out buffers, out workers);
+
+                StartConveyor(reader, readerThread, workers, buffers);
+
+                int idx = 0;
 
                 // as long as there are bytes read from input, keep conveyor
                 // when no more input data, set this flag & wait till all therads are finihed.
@@ -72,8 +77,6 @@ namespace BigFilesArchiver
 
                 do
                 {
-                    //all zippers are working
-
                     ThreadWorker worker = workers[idx];
 
                     if (worker == null)
@@ -81,10 +84,7 @@ namespace BigFilesArchiver
                         General.Log($"all threads are finished");
                         // good place to let the writer go
                         writerThread.Finish();
-                        //this might be unnecesary, since program is exiting anyway,
-                        //but to keep code orginised:
-                        writerThread.Dispose(); 
-                        writerThread = null;
+                        //writerThread.Dispose(); 
                         break;
                     }
 
@@ -99,14 +99,13 @@ namespace BigFilesArchiver
                     if (!finishing)
                     {
                         General.Log($"{idx} start reading next portion");
-                        //reader.Buffer = buffers[idx].In;
                         reader.Buffer = buffers[idx];
                         readerThread.haveWork.Set();
 
                         General.Log($"{idx} need both In & Out buffers to be Ready to start next part zippin");
                         readerThread.notifyDone.WaitOne();
 
-                        // check if read anyting
+                        // check if have read anyting
                         if (reader.Buffer.BytesRead <= 0)
                         {
                             //have read all, and all is (being) processed
@@ -114,8 +113,7 @@ namespace BigFilesArchiver
 
                             // right place to set the reader free
                             readerThread.Finish();
-                            readerThread.Dispose();//to feel good
-                            readerThread = null;
+                            //readerThread.Dispose();
                         }
 
                     }
@@ -142,20 +140,18 @@ namespace BigFilesArchiver
 
                 } while (true);
 
-			}
-			catch (Exception exc)
-			{
-				General.Log($"ManageThreads encountered an error {exc.Message} returning to caller.");
-				throw;
-			}
-			finally
-            {
-                CleanUp(buffers, workers, readerThread, writerThread);
+                General.Log($"{act} finished successfuly.");
             }
-
-
-            General.Log($"{act} finished.");
-		}
+            catch (Exception exc)
+            {
+                General.Log($"ManageThreads encountered an error {exc.Message} returning to caller.");
+                throw;
+            }
+            finally
+            {
+                CleanUp(buffers, workers);
+            }
+        }
 
 
         #region initialisation methods
@@ -165,24 +161,15 @@ namespace BigFilesArchiver
         /// <param name="act"></param>
         /// <param name="bufferSize"></param>
         /// <param name="workersCount"></param>
-        /// <param name="outFileStream"></param>
-        /// <param name="inFileStream"></param>
         /// <param name="buffers"></param>
         /// <param name="workers"></param>
-        /// <param name="reader"></param>
-        /// <param name="readerThread"></param>
-        /// <param name="writer"></param>
-        /// <param name="writerThread"></param>
-        static void CreateAllObjects(ArchAction act, int bufferSize, uint workersCount, FileStream outFileStream, FileStream inFileStream, out InOutBuffer[] buffers, out ThreadWorker[] workers, out ArchReader reader, out ThreadWorker readerThread, out ArchWriter writer, out ThreadWorker writerThread)
+        static void CreateBuffersAndWorkers(ArchAction act, int bufferSize, uint workersCount, out InOutBuffer[] buffers, out ThreadWorker[] workers)
         {
-            buffers = CreateBuffers(workersCount, bufferSize);
-            ArchWorker[] archivers = CreateArchivers(buffers, act);
+            CreateBuffers(workersCount, bufferSize, out buffers);
 
-            workers = CreateThreadWorkers(archivers);
-            reader = new ArchReader(inFileStream, act);
-            readerThread = new ThreadWorker(reader, true);
-            writer = new ArchWriter(outFileStream, act);
-            writerThread = new ThreadWorker(writer, true);
+            CreateArchivers(buffers, act, out ArchWorker[] archivers);
+
+            CreateThreadWorkers(archivers, out workers);
         }
 
 
@@ -195,101 +182,103 @@ namespace BigFilesArchiver
         /// <param name="buffers"></param>
         static void StartConveyor(ArchReader reader, ThreadWorker readerThread, ThreadWorker[] workers, InOutBuffer[] buffers)
         {
-			Debug.Assert(workers.Length == buffers.Length);
+            Debug.Assert(workers.Length == buffers.Length);
 
-			for (int idx = 0; idx < workers.Length; idx++)
-			{
-				ThreadWorker worker = workers[idx];
+            for (int idx = 0; idx < workers.Length; idx++)
+            {
+                ThreadWorker worker = workers[idx];
 
-				General.Log($"{idx} start reading");
-				reader.Buffer = buffers[idx];
-				readerThread.haveWork.Set();
+                General.Log($"{idx} start reading");
+                reader.Buffer = buffers[idx];
+                readerThread.haveWork.Set();
 
-				readerThread.notifyDone.WaitOne();
-				General.Log($"{idx} reading chunk complete, start zippin");
-				worker.haveWork.Set();
-				worker.Start();
-			}
-		}
+                readerThread.notifyDone.WaitOne();
+                General.Log($"{idx} reading chunk complete, start zippin");
+                worker.haveWork.Set();
+                worker.Start();
+            }
+        }
 
 
-		/// <summary>
-		/// Create number of working threads objects
-		/// </summary>
-		/// <param name="archivers">those who will do work in threads</param>
-		/// <returns></returns>
-		static ThreadWorker[] CreateThreadWorkers(ArchWorker[] archivers)
+        /// <summary>
+        /// Create number of working threads objects
+        /// </summary>
+        /// <param name="archivers">those who will do work in threads</param>
+        /// <returns>workers as out param</returns>
+        static void CreateThreadWorkers(ArchWorker[] archivers, out ThreadWorker[] workers)
         {
-			int count = archivers.Length;
+            int count = archivers.Length;
 
-			Debug.Assert(count > 0);
+            Debug.Assert(count > 0);
 
-			General.Log($"Creating {count} thread workers");
+            General.Log($"Creating {count} thread workers");
 
-			ThreadWorker[] workers = new ThreadWorker[count];
+            workers = new ThreadWorker[count];
 
-			for (int i = 0; i < archivers.Length; i++)
-				workers[i] = new ThreadWorker(archivers[i]);
-
-			return workers;
-		}
+            for (int i = 0; i < archivers.Length; i++)
+                workers[i] = new ThreadWorker(archivers[i]);
+        }
 
 
-		/// <summary>
-		/// Creates requested number of working buffers with given size
-		/// </summary>
-		/// <param name="workersCount"></param>
-		/// <param name="bufferSize"></param>
-		/// <returns></returns>
-		static InOutBuffer[] CreateBuffers(uint workersCount, int bufferSize)
+        /// <summary>
+        /// Creates requested number of working buffers with given size
+        /// </summary>
+        /// <param name="workersCount"></param>
+        /// <param name="bufferSize"></param>
+        /// <returns>buffers as out parameter</returns>
+        static void CreateBuffers(uint workersCount, int bufferSize, out InOutBuffer[] buffers)
         {
-			InOutBuffer.ChunkSize = bufferSize;
+            General.Log($"Creating {workersCount} in/out buffers");
 
-			InOutBuffer[] buffers = Array.ConvertAll(new InOutBuffer[workersCount], _ => new InOutBuffer());
+            InOutBuffer.ChunkSize = bufferSize;
 
-			return buffers;
-		}
+            //InOutBuffer[] buffers = Array.ConvertAll(new InOutBuffer[workersCount], _ => new InOutBuffer());
+
+            buffers = new InOutBuffer[workersCount];
+
+            for (int idx = 0; idx < buffers.Length; idx++)
+                buffers[idx] = new InOutBuffer();
+        }
 
 
-		/// <summary>
-		/// Detects optimal working threads count for this system
-		/// </summary>
-		/// <returns></returns>
-		public static uint ChooseWorkersCount()
+        /// <summary>
+        /// Detects optimal working threads count for this system
+        /// </summary>
+        /// <returns></returns>
+        public static uint ChooseWorkersCount()
         {
-			int procCount = Environment.ProcessorCount;
-			General.Log($"Number Of Logical Processors: {procCount}");
+            int procCount = Environment.ProcessorCount;
+            General.Log($"Number Of Logical Processors: {procCount}");
 
-			// it is unlikely to have single core nowdays, but just in case
-			if (procCount < 2)
-				// choose any number > 1 to demonstrate multithreading
-				procCount = 2;
+            // it is unlikely to have single core nowdays, but just in case
+            if (procCount < 2)
+                // choose any number > 1 to demonstrate multithreading
+                procCount = 2;
 
-			return (uint) procCount;
-		}
+            return (uint)procCount;
+        }
 
 
-		/// <summary>
-		/// Create those who do zip/unzip
-		/// </summary>
-		/// <param name="buffers"></param>
-		/// <param name="act">zip or unzip</param>
-		/// <returns></returns>
-		static ArchWorker[] CreateArchivers(InOutBuffer[] buffers, ArchAction act)
-		{
-			int count = buffers.Length;
+        /// <summary>
+        /// Create those who do zip/unzip
+        /// </summary>
+        /// <param name="buffers"></param>
+        /// <param name="act">zip or unzip</param>
+        /// <param name="archivers">out param</param>
+        /// <returns></returns>
+        static void CreateArchivers(InOutBuffer[] buffers, ArchAction act, out ArchWorker[] archivers)
+        {
+            int count = buffers.Length;
 
-			Debug.Assert(count > 0);
+            Debug.Assert(count > 0);
 
-			General.Log($"Creating {count} (un)zippers");
+            General.Log($"Creating {count} (un)zippers");
 
-			ArchWorker[] archivers = new ArchWorker[count];
+            archivers = new ArchWorker[count];
 
-			for (int i = 0; i < archivers.Length; i++)
-				archivers[i] = new ArchWorker(inBuffer: buffers[i], outBuffer: buffers[i], act);
-
-			return archivers;
-		}
+            for (int i = 0; i < archivers.Length; i++)
+                archivers[i] = new ArchWorker(inBuffer: buffers[i], outBuffer: buffers[i], act);
+        }
         #endregion initialisation methods
 
 
@@ -299,9 +288,7 @@ namespace BigFilesArchiver
         /// </summary>
         /// <param name="buffers"></param>
         /// <param name="workers"></param>
-        /// <param name="readerThread"></param>
-        /// <param name="writerThread"></param>
-        private static void CleanUp(InOutBuffer[] buffers, ThreadWorker[] workers, ThreadWorker readerThread, ThreadWorker writerThread)
+        private static void CleanUp(InOutBuffer[] buffers, ThreadWorker[] workers)
         {
             try
             {
@@ -315,9 +302,6 @@ namespace BigFilesArchiver
                     foreach (var obj in buffers)
                         obj?.Dispose();
                 }
-
-                readerThread?.Dispose();
-                writerThread?.Dispose();
             }
             catch (Exception exc2)
             {
