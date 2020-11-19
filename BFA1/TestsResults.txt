@@ -1,0 +1,8 @@
+
+1GB file was zipped by embedded Windows zipper in about 30 seconds.
+
+The same file was zipped by this utility in about 7 seconds. Sizes differ insignificantly.
+
+Of cause format is no zip. Though every chunk is in zip format. Unzipping is also notably faster.
+
+Zipped/unzipped output file is exactly like input file (binary equal).
