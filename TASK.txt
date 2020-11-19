@@ -1,0 +1,16 @@
+Create a code which zips/unzips a big file by blocks of data, using Multi-threads.
+
+Use System.IO.Compression.GzipStream.
+
+Format of the output archive file doesn't have to be Zip. 
+
+In fact the output zipped file will consist of few blocks each in zip format.
+
+
+Several solutions are implemeted:
+
+BFA1 - uses only basic classes and synchronization objects for multithreading. Work is orginised in kind of ratating-chained working zippers.
+
+BFA3 - also only basic classes are used. But workers synchronisation is put into separated class.
+
+BFA5 - async/await are used in this version.
